@@ -1,0 +1,52 @@
+
+select * from regions;
+select * from customer_transactions;
+select * from customer_nodes;
+
+--What is the closing balance for each customer at the end of the month?
+
+with tbl1 as
+	(select 
+		 customer_id,
+		 txn_date,
+		 coalesce(sum(case when txn_type='deposit' then txn_amount end) over(partition by customer_id order by txn_date),0) as cumulative_deposit,
+	 	 coalesce(sum(case when txn_type in ('purchase','withdrawal') then txn_amount end) over(partition by customer_id order by txn_date),0) as cumulative_expense
+	from customer_transactions),
+	tbl2 as
+	(select
+		customer_id,
+		date_trunc('month',txn_date)::date as year_month,
+		max(cumulative_deposit) as total_deposit_till_last_day,
+		max(cumulative_expense) as total_expense_till_last_day
+	from tbl1
+	group by 1,2),
+	
+	month_end_balance_temp as
+	(select 
+		customer_id,
+		year_month,
+		total_deposit_till_last_day - total_expense_till_last_day as closing_balance
+	from tbl2
+	order by 1,2 ),
+	max_min_year_month as
+	(select customer_id ,max(year_month) as max_month,min(year_month) as min_month from month_end_balance_temp group by 1),
+
+	sequential_month as
+	(select * ,generate_series(min_month::date,max_month::date,'1 month') as year_month_n from max_min_year_month),
+	
+	month_end_balance as
+	(select 
+	 	b.customer_id,
+	 	b.year_month_n,
+	 	coalesce(a.closing_balance,lag(a.closing_balance) over(partition by b.customer_id order by b.year_month_n))
+	 from month_end_balance_temp as a
+	 right join sequential_month as b
+	 on b.customer_id = a.customer_id and b.year_month_n = a.year_month)
+	 
+
+select * from month_end_balance ;
+
+
+
+
+
